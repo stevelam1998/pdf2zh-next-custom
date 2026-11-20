@@ -1,10 +1,9 @@
 [project]
 name = "pdf2zh-next"
-version = "2.7.1"
-description = "Latex PDF Translator"
+version = "2.10.2"
+description = "PDF Translator based on BabelDOC"
 authors = [
     { name = "awwaawwa", email = "aw@funstory.ai" },
-    { name = "Byaidu", email = "byaidux@gmail.com" }
 ]
 maintainers = [
     { name = "awwaawwa", email = "aw@funstory.ai" }
@@ -19,7 +18,6 @@ classifiers = [
 dependencies = [
     "requests",
     # for arm64 linux whells
-    "pymupdf<1.25.3",
     "tqdm",
     "tenacity",
     "numpy",
@@ -34,7 +32,7 @@ dependencies = [
     "gradio-pdf>=0.0.21",
     "peewee>=3.17.8",
     "fontTools",
-    "babeldoc>=0.5.20,<0.6.0",
+    "babeldoc>=0.7.1,<0.8.0",
     "rich",
     "pydantic-settings>=2.8.1",
     "pydantic>=2.10.6",
@@ -65,7 +63,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/PDFMathTranslate/PDFMathTranslate-next"
+Homepage = "https://github.com/PDFMathTranslate-next/PDFMathTranslate-next"
 
 [build-system]
 requires = ["hatchling"]
@@ -83,7 +81,7 @@ max-line-length = 88
 
 
 [bumpver]
-current_version = "2.7.1"
+current_version = "2.10.2"
 version_pattern = "MAJOR.MINOR.PATCH[.PYTAGNUM]"
 
 [bumpver.file_patterns]

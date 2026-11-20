@@ -46,6 +46,39 @@ class TestBuildArgsParser:
         assert "basic" in field_name2type
         assert "translation" in field_name2type
 
+    def test_deepseek_thinking_mode_is_explicit_cli_value(self):
+        """Test DeepSeek thinking mode can be selected from CLI."""
+        parser, _ = build_args_parser()
+
+        args = parser.parse_args(["--deepseek", "--deepseek-thinking-mode", "disabled"])
+
+        assert args.deepseek is True
+        assert args.deepseek_thinking_mode == "disabled"
+
+    def test_term_deepseek_thinking_mode_is_explicit_cli_value(self):
+        """Test DeepSeek thinking can be explicitly enabled from CLI."""
+        parser, _ = build_args_parser()
+
+        args = parser.parse_args(
+            [
+                "--term-deepseek-thinking-mode",
+                "enabled",
+                "--term-deepseek-reasoning-effort",
+                "max",
+            ]
+        )
+
+        assert args.term_deepseek_thinking_mode == "enabled"
+        assert args.term_deepseek_reasoning_effort == "max"
+
+    def test_deepseek_thinking_omitted_stays_magic_default(self):
+        """Test omitted DeepSeek thinking mode does not override env/config."""
+        parser, _ = build_args_parser()
+
+        args = parser.parse_args(["--deepseek"])
+
+        assert args.deepseek is True
+        assert args.deepseek_thinking_mode is MagicDefault
 
 class TestConfigManager:
     def test_singleton(self):
@@ -133,6 +166,106 @@ class TestConfigManager:
         assert result["qps"] == 10
         # Env settings should take precedence over defaults
         assert result["report_interval"] == 0.5
+
+    def test_deepseek_thinking_cli_omitted_preserves_env_true(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Test omitted DeepSeek thinking CLI mode preserves env precedence."""
+        monkeypatch.setenv("PDF2ZH_DEEPSEEK_THINKING_MODE", "enabled")
+        cm = ConfigManager()
+        parser, _ = build_args_parser()
+        args = parser.parse_args(["--deepseek"])
+        cli_args = {
+            k.replace("-", "_"): v
+            for k, v in vars(args).items()
+            if v is not MagicDefault
+        }
+
+        merged = cm.merge_settings(
+            [cm.parse_dict_vars(dict_vars=cli_args), cm.parse_env_vars()]
+        )
+
+        assert merged["deepseek_detail"]["deepseek_thinking_mode"] == "enabled"
+
+    def test_deepseek_thinking_cli_omitted_preserves_config_true(self):
+        """Test omitted DeepSeek thinking CLI mode preserves config precedence."""
+        cm = ConfigManager()
+        parser, _ = build_args_parser()
+        args = parser.parse_args(["--deepseek"])
+        cli_args = {
+            k.replace("-", "_"): v
+            for k, v in vars(args).items()
+            if v is not MagicDefault
+        }
+        config_args = {"deepseek_detail": {"deepseek_thinking_mode": "enabled"}}
+
+        merged = cm.merge_settings([cm.parse_dict_vars(dict_vars=cli_args), config_args])
+
+        assert merged["deepseek_detail"]["deepseek_thinking_mode"] == "enabled"
+
+    def test_deepseek_thinking_cli_mode_overrides_config_mode(self):
+        """Test DeepSeek CLI thinking mode uses normal precedence."""
+        cm = ConfigManager()
+        parser, _ = build_args_parser()
+        args = parser.parse_args(
+            [
+                "--deepseek",
+                "--deepseek-thinking-mode",
+                "disabled",
+                "--deepseek-reasoning-effort",
+                "max",
+            ]
+        )
+        cli_args = {
+            k.replace("-", "_"): v
+            for k, v in vars(args).items()
+            if v is not MagicDefault
+        }
+        config_args = {
+            "deepseek_detail": {
+                "deepseek_thinking_mode": "enabled",
+                "deepseek_reasoning_effort": "high",
+            }
+        }
+
+        merged = cm.merge_settings([cm.parse_dict_vars(dict_vars=cli_args), config_args])
+
+        assert merged["deepseek_detail"]["deepseek_thinking_mode"] == "disabled"
+        assert merged["deepseek_detail"]["deepseek_reasoning_effort"] == "max"
+
+    def test_term_deepseek_thinking_cli_mode_overrides_config_mode(self):
+        """Test term DeepSeek CLI thinking mode uses normal precedence."""
+        cm = ConfigManager()
+        parser, _ = build_args_parser()
+        args = parser.parse_args(
+            [
+                "--term-deepseek",
+                "--term-deepseek-thinking-mode",
+                "disabled",
+                "--term-deepseek-reasoning-effort",
+                "max",
+            ]
+        )
+        cli_args = {
+            k.replace("-", "_"): v
+            for k, v in vars(args).items()
+            if v is not MagicDefault
+        }
+        config_args = {
+            "term_deepseek_detail": {
+                "term_deepseek_thinking_mode": "enabled",
+                "term_deepseek_reasoning_effort": "high",
+            }
+        }
+
+        merged = cm.merge_settings([cm.parse_dict_vars(dict_vars=cli_args), config_args])
+
+        assert merged["term_deepseek"] is True
+        assert (
+            merged["term_deepseek_detail"]["term_deepseek_thinking_mode"]
+            == "disabled"
+        )
+        assert merged["term_deepseek_detail"]["term_deepseek_reasoning_effort"] == "max"
 
     def test_initialize_config(self, monkeypatch: pytest.MonkeyPatch):
         """Test complete configuration initialization"""
@@ -373,6 +506,15 @@ class TestConfigManager:
         )
         assert isinstance(default_config["basic"]["debug"], bool)
         assert isinstance(default_config["translation"]["qps"], int | float)
+        assert "deepseek_thinking_mode" in default_config["deepseek_detail"]
+        assert "deepseek_reasoning_effort" in default_config["deepseek_detail"]
+        assert default_config["deepseek_detail"]["deepseek_thinking_mode"] is None
+        assert "term_deepseek_thinking_mode" in default_config["term_deepseek_detail"]
+        assert "term_deepseek_reasoning_effort" in default_config["term_deepseek_detail"]
+        assert (
+            default_config["term_deepseek_detail"]["term_deepseek_thinking_mode"]
+            is None
+        )
 
     def test_settings_not_initialized(self):
         """Test accessing settings before initialization"""

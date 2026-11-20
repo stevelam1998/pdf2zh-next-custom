@@ -1,5 +1,6 @@
 import logging
 import re
+import shlex
 import typing
 from dataclasses import dataclass
 from inspect import getdoc
@@ -9,6 +10,7 @@ from typing import TypeAlias
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import PrivateAttr
 from pydantic import create_model
 
 # any field in SENSITIVE_FIELDS will be masked in GUI
@@ -72,6 +74,8 @@ class TranslateEngineSettingError(Exception):
 class OpenAISettings(BaseModel):
     """OpenAI API settings"""
 
+    _openai_extra_body: dict[str, typing.Any] | None = PrivateAttr(default=None)
+
     translate_engine_type: Literal["OpenAI"] = Field(default="OpenAI")
     support_llm: Literal["yes", "no"] = Field(
         default="yes", description="Whether the translator supports LLM"
@@ -99,7 +103,7 @@ class OpenAISettings(BaseModel):
     )
 
     # This parameter contains a spelling error, but it will not be corrected for compatibility reasons.
-    # For details, see: https://github.com/PDFMathTranslate/PDFMathTranslate-next/issues/175#issuecomment-3213568681
+    # For details, see: https://github.com/PDFMathTranslate-next/PDFMathTranslate-next/issues/175#issuecomment-3213568681
     openai_send_temprature: bool | None = Field(
         default=None, description="Send temprature to OpenAI service"
     )
@@ -191,20 +195,69 @@ class DeepSeekSettings(BaseModel):
     deepseek_enable_json_mode: bool | None = Field(
         default=None, description="Enable JSON mode for DeepSeek service"
     )
+    deepseek_thinking_mode: str | None = Field(
+        default=None,
+        description="Thinking mode for DeepSeek v4 models (enabled/disabled)",
+        json_schema_extra={
+            "gui": {
+                "widget": "dropdown",
+                "choices": [
+                    ("Unset", None),
+                    ("enabled", "enabled"),
+                    ("disabled", "disabled"),
+                ],
+                "preserve_current_value": True,
+            },
+        },
+    )
+    deepseek_reasoning_effort: str | None = Field(
+        default=None,
+        description="Reasoning effort for DeepSeek thinking mode (high/max)",
+        json_schema_extra={
+            "gui": {
+                "widget": "dropdown",
+                "choices": ["high", "max"],
+                "default_on_show": "high",
+                "visible_when": {
+                    "field": "deepseek_thinking_mode",
+                    "equals": "enabled",
+                },
+                "preserve_current_value": True,
+            },
+        },
+    )
 
     def validate_settings(self) -> None:
         if not self.deepseek_api_key:
             raise ValueError("DeepSeek API key is required")
         self.deepseek_api_key = _clean_string(self.deepseek_api_key)
         self.deepseek_model = _clean_string(self.deepseek_model)
+        self.deepseek_thinking_mode = _clean_string(self.deepseek_thinking_mode)
+        self.deepseek_reasoning_effort = _clean_string(self.deepseek_reasoning_effort)
+        if self.deepseek_thinking_mode not in (None, "enabled", "disabled"):
+            raise ValueError("DeepSeek thinking mode must be enabled or disabled")
+        if self.deepseek_reasoning_effort and self.deepseek_reasoning_effort not in (
+            "high",
+            "max",
+        ):
+            raise ValueError("DeepSeek reasoning effort must be high or max")
 
     def transform(self) -> OpenAISettings:
-        return OpenAISettings(
+        settings = OpenAISettings(
             openai_model=self.deepseek_model,
             openai_api_key=self.deepseek_api_key,
             openai_base_url="https://api.deepseek.com/v1",
             openai_enable_json_mode=self.deepseek_enable_json_mode,
         )
+        if self.deepseek_model and self.deepseek_model.startswith("deepseek-v4-"):
+            if self.deepseek_thinking_mode == "enabled":
+                settings._openai_extra_body = {"thinking": {"type": "enabled"}}
+                if self.deepseek_reasoning_effort:
+                    settings.openai_reasoning_effort = self.deepseek_reasoning_effort
+                    settings.openai_send_reasoning_effort = True
+            elif self.deepseek_thinking_mode == "disabled":
+                settings._openai_extra_body = {"thinking": {"type": "disabled"}}
+        return settings
 
 
 GUI_PASSWORD_FIELDS.append("deepseek_api_key")
@@ -828,6 +881,69 @@ class ClaudeCodeSettings(BaseModel):
             raise ValueError("Claude Code path is required")
 
 
+class CLISettings(BaseModel):
+    """CLI translator settings
+
+    This allows you to use any external CLI translation tool.
+
+    Input text is always passed via stdin.
+
+    Example (stdin, default):
+    - clitranslator_command: "your-translator-command --flag value"
+    """
+
+    translate_engine_type: Literal["CLITranslator"] = Field(default="CLITranslator")
+    support_llm: Literal["yes", "no"] = Field(default="no")
+
+    clitranslator_command: str = Field(
+        default="",
+        description=(
+            "CLI command to execute. May include arguments and will be split like a "
+            "shell command (e.g., 'your-translator-command --flag value')."
+        ),
+    )
+    clitranslator_timeout: int = Field(
+        default=60,
+        description="Command timeout in seconds",
+        ge=1,
+        le=300,
+    )
+    clitranslator_postprocess_command: str | None = Field(
+        default=None,
+        description=(
+            "Optional postprocess command to run on CLI output (reads from stdin). "
+            "Example: 'jq -r .result.translation'"
+        ),
+    )
+
+    def validate_settings(self):
+        if not self.clitranslator_command:
+            raise ValueError(
+                "CLI command is required. Please specify --clitranslator-command"
+            )
+
+        try:
+            command_parts = shlex.split(self.clitranslator_command)
+        except ValueError as e:
+            raise ValueError(f"Invalid clitranslator_command: {e}") from e
+        if not command_parts:
+            raise ValueError(
+                "CLI command is required. Please specify --clitranslator-command"
+            )
+
+        if self.clitranslator_postprocess_command is not None:
+            if not self.clitranslator_postprocess_command.strip():
+                raise ValueError("clitranslator_postprocess_command cannot be empty")
+            try:
+                postprocess_parts = shlex.split(self.clitranslator_postprocess_command)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid clitranslator_postprocess_command: {e}"
+                ) from e
+            if not postprocess_parts:
+                raise ValueError("clitranslator_postprocess_command cannot be empty")
+
+
 ## Please add the translator configuration class above this location.
 
 # 所有翻译引擎
@@ -855,6 +971,7 @@ TRANSLATION_ENGINE_SETTING_TYPE: TypeAlias = (
     | QwenMtSettings
     | OpenAICompatibleSettings
     | ClaudeCodeSettings
+    | CLISettings
 )
 
 # 不支持的翻译引擎
@@ -975,6 +1092,7 @@ def _build_term_setting_model(
                 default_factory=model_field.default_factory,
                 alias=model_field.alias,
                 discriminator=model_field.discriminator,
+                json_schema_extra=model_field.json_schema_extra,
             ),
         )
 
